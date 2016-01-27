@@ -9,6 +9,8 @@ using System.Text;
 using System.Windows.Forms;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
+
 
 namespace site_portscanner
 {
@@ -18,6 +20,9 @@ namespace site_portscanner
         {
             InitializeComponent();
         }
+
+        public int PortKoncowy { get; set; }
+
 
         private void btnSkanuj_Click(object sender, EventArgs e)
         {
@@ -34,12 +39,12 @@ namespace site_portscanner
                 adresHosta = Dns.GetHostEntry(txtAdres.Text).AddressList[0];
                 portStart = Int16.Parse(txtPortS.Text);
                 portKoniec = Int16.Parse(txtPortK.Text);
+                this.PortKoncowy = portKoniec;
 
                 if (portStart < 0 || portStart > Int16.MaxValue || portStart > portKoniec || portKoniec > Int16.MaxValue)
                 {
                     throw new Exception("Niepoprawne numery portów");
                 }
-
                 lblAdresIP.Text = adresHosta.ToString();
                 tslStatus.Text = "Trwa skanowanie ...";
             }
@@ -55,19 +60,66 @@ namespace site_portscanner
             }
 
             Socket gniazdo = new Socket(adresHosta.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            for (int i = portStart; i <= portKoniec; i++)
+            Thread watek = null;
+            for (int i = portStart; i <= portKoniec; i += 25)
+            {
+                watek = new Thread(new ParameterizedThreadStart(skanowanie));
+                watek.Start(new DaneSkan() { Gniazdo = gniazdo, ZdalnyHost = new IPEndPoint(adresHosta.Address, i) });
+            }
+            //watek.Join();
+            //tslStatus.Text = "Skanowanie zakończone";
+        }
+
+
+        public void skanowanie(object par)
+        {
+            Socket gniazdo = ((DaneSkan)par).Gniazdo;
+            IPEndPoint zdalnyHost = ((DaneSkan)par).ZdalnyHost;
+            int nrPortu = zdalnyHost.Port;
+
+            for (int i = nrPortu; i < nrPortu + 25; i++)
             {
                 try
                 {
-                    gniazdo.Connect(new IPEndPoint(adresHosta.Address, i));
-                    lbListaPortow.Items.Add(i.ToString());
+                    gniazdo = new Socket(zdalnyHost.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                    zdalnyHost = new IPEndPoint(zdalnyHost.Address, i);
+                    gniazdo.Connect(zdalnyHost);
+                    gniazdo.Close();
+                    this.BeginInvoke(new WynikDelegacja(wypiszWynik), i);
                 }
-                catch
+                catch (SocketException ex)
                 {
-
+                    // Console.WriteLine("brak połączenia na porcie: " + port.Port);
+                    if (i == this.PortKoncowy)
+                        tslStatus.Text = "Skanowanie zakończone";
+                }
+                finally
+                {
+                    // gniazdo.Dispose();
+                    // port = null;
                 }
             }
-            tslStatus.Text = "Skanowanie zakończone";
         }
+        public void wypiszWynik(int port)
+        {
+            lbListaPortow.Items.Add(port);
+            if (port == this.PortKoncowy)
+                tslStatus.Text = "Skanowanie zakończone";
+        }
+
+        public delegate void WynikDelegacja(int port);
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            Application.Exit();
+
+        }
+
+    }
+
+    class DaneSkan
+    {
+        public Socket Gniazdo { get; set; }
+        public IPEndPoint ZdalnyHost { get; set; }
     }
 }
